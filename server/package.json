@@ -1,0 +1,17 @@
+{
+  "name": "my_server-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "文件管理后端：上传、创建、查看、下载、删除",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^2.2.0"
+  }
+}
