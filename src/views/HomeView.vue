@@ -60,7 +60,8 @@
       <p v-if="loading" class="hint">加载中…</p>
       <p v-else-if="files.length === 0" class="hint">暂无文件</p>
 
-      <table v-else class="files">
+      <div v-else class="table-scroll">
+        <table class="files">
         <thead>
           <tr>
             <th class="sel"><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th>
@@ -151,7 +152,8 @@
             </tr>
           </template>
         </tbody>
-      </table>
+        </table>
+      </div>
     </section>
 
     <!-- 查看弹窗 -->
@@ -489,6 +491,8 @@ textarea {
   background: transparent;
   color: inherit;
   font-family: inherit;
+  /* 输入框只允许上下拉伸，禁止左右拉伸 */
+  resize: vertical;
 }
 button,
 .btn {
@@ -547,6 +551,30 @@ button.danger {
 }
 .files .name {
   word-break: break-all;
+}
+/* 响应式：窄屏时表格整体横向滚动 */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 760px) {
+  .files {
+    min-width: 620px;
+  }
+  .fm {
+    padding: 1rem;
+  }
+  h1 {
+    font-size: 1.3rem;
+  }
+  .actions {
+    gap: 0.25rem;
+  }
+  .actions button,
+  .actions .btn {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.82rem;
+  }
 }
 .files .sel {
   width: 2rem;
@@ -645,6 +673,10 @@ button.lock-on {
 }
 .comment-form textarea {
   margin-bottom: 0.5rem;
+  resize: vertical; /* 只允许上下拉伸 */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .comment-form-foot {
   text-align: right;
