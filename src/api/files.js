@@ -58,6 +58,14 @@ export async function addComment(name, { name: customName, content }) {
   return handle(res)
 }
 
+// 删除某条留言
+export async function deleteComment(name, id) {
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}/comments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  return handle(res)
+}
+
 // 删除文件
 export async function deleteFile(name) {
   const res = await fetch(`${BASE}/${encodeURIComponent(name)}`, { method: 'DELETE' })

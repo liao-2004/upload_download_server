@@ -1,5 +1,14 @@
 <template>
   <main class="fm">
+    <!-- 顶部滚动公告横幅（可关闭，点击跳转） -->
+    <div v-if="showNotice" class="notice-bar" @click="onNoticeClick">
+      <div class="notice-track">
+        <span class="notice-text">服务到期2026年12月1日过期、请及时续费，以免影响正常使用，谢谢配合！</span>
+        <span class="notice-text">服务到期2026年12月1日过期、请及时续费，以免影响正常使用，谢谢配合！</span>
+      </div>
+      <button class="notice-close" title="关闭" @click.stop="closeNotice">×</button>
+    </div>
+
     <h1>文件管理</h1>
 
     <p v-if="message" :class="['toast', message.type]">{{ message.text }}</p>
@@ -118,9 +127,13 @@
                   <ul v-else class="comment-list">
                     <li v-for="c in comments[f.name]" :key="c.id">
                       <div class="comment-meta">
-                        <strong class="c-name">{{ c.name || c.ip || '匿名' }}</strong>
-                        <span class="c-ip">{{ c.ip }}</span>
+                        <strong class="c-name">{{ c.name || c.ip || '匿名' }}</strong> 
                         <time>{{ formatTime(c.createdAt) }}</time>
+                        <button
+                          class="del"
+                          title="删除这条留言"
+                          @click="onDeleteComment(f, c.id)"
+                        >×</button>
                       </div>
                       <div class="c-content">{{ c.content }}</div>
                     </li>
@@ -173,6 +186,7 @@ import {
   downloadUrl,
   listComments,
   addComment,
+  deleteComment,
   lockFile,
   unlockFile,
   deleteMany,
@@ -191,6 +205,20 @@ const newContent = ref('')
 // 上传
 const fileInput = ref(null)
 const uploading = ref(false)
+
+// 顶部公告横幅
+const NOTICE_KEY = 'notice_dismissed'
+const NOTICE_URL = 'https://www.aliyun.com/benefit?tid=product&utm_content=se_1023591267'
+const showNotice = ref(localStorage.getItem(NOTICE_KEY) !== '1')
+
+function onNoticeClick() {
+  window.open(NOTICE_URL, '_blank')
+}
+
+function closeNotice() {
+  showNotice.value = false
+  localStorage.setItem(NOTICE_KEY, '1')
+}
 
 // 查看文件弹窗
 const viewer = ref(null) // { name, content } | null
@@ -285,6 +313,19 @@ const commentSending = reactive({})
 function draft(name) {
   if (!commentDraft[name]) commentDraft[name] = { name: '', text: '' }
   return commentDraft[name]
+}
+
+// 删除一条留言
+async function onDeleteComment(f, id) {
+  if (!confirm('确定删除这条留言？')) return
+  try {
+    await deleteComment(f.name, id)
+    comments[f.name] = (comments[f.name] || []).filter((c) => c.id !== id)
+    f.commentCount = Math.max(0, (f.commentCount || 0) - 1)
+    notify('ok', '留言已删除')
+  } catch (e) {
+    notify('err', e.message)
+  }
 }
 
 // 展开 / 收起某文件的留言区，首次展开时加载留言
@@ -603,6 +644,21 @@ button.lock-on {
 .comment-meta time {
   opacity: 0.6;
   margin-left: auto;
+}
+.comment-meta .del {
+  border: none;
+  background: transparent;
+  color: #e05a5a;
+  cursor: pointer;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+  opacity: 0.7;
+}
+.comment-meta .del:hover {
+  opacity: 1;
+  background: rgba(224, 90, 90, 0.15);
+  border-radius: 4px;
 }
 .c-content {
   font-size: 0.9rem;
