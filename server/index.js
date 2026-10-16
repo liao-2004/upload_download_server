@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STORAGE_DIR = path.join(__dirname, 'storage')
-const PORT = 3006
+const PORT = 3008
 
 // 确保存储目录存在
 fs.mkdirSync(STORAGE_DIR, { recursive: true })
@@ -16,6 +16,8 @@ fs.mkdirSync(STORAGE_DIR, { recursive: true })
 const app = express()
 app.use(cors())
 app.use(express.json())
+// 启用信任代理，便于拿到 X-Forwarded-For 中的真实客户端 IP
+app.set('trust proxy', true)
 
 /**
  * 把用户提供的文件名解析成 storage 目录下的安全绝对路径。
@@ -62,10 +64,47 @@ function uniqueName(name) {
 
 // --- 路由 ---
 
+// 锁定状态持久化（不放入 storage，避免出现在文件列表）
+const LOCKS_FILE = path.join(__dirname, 'locks.json')
+
+async function loadLocks() {
+  try {
+    const raw = await fsp.readFile(LOCKS_FILE, 'utf8')
+    const data = JSON.parse(raw)
+    return data && typeof data === 'object' ? data : {}
+  } catch (e) {
+    if (e.code === 'ENOENT') return {}
+    throw e
+  }
+}
+
+async function saveLocks(data) {
+  await fsp.writeFile(LOCKS_FILE, JSON.stringify(data, null, 2), 'utf8')
+}
+
+// 留言以 JSON 文件持久化在 server 目录下（不放入 storage，避免出现在文件列表）
+const COMMENTS_FILE = path.join(__dirname, 'comments.json')
+
+async function loadComments() {
+  try {
+    const raw = await fsp.readFile(COMMENTS_FILE, 'utf8')
+    return JSON.parse(raw) || {}
+  } catch (e) {
+    if (e.code === 'ENOENT') return {}
+    throw e
+  }
+}
+
+async function saveComments(data) {
+  await fsp.writeFile(COMMENTS_FILE, JSON.stringify(data, null, 2), 'utf8')
+}
+
 // 列出所有文件
 app.get('/api/files', async (req, res) => {
   try {
     const names = await fsp.readdir(STORAGE_DIR)
+    const locks = await loadLocks()
+    const comments = await loadComments()
     const files = []
     for (const name of names) {
       const stat = await fsp.stat(path.join(STORAGE_DIR, name))
@@ -74,6 +113,8 @@ app.get('/api/files', async (req, res) => {
           name,
           size: stat.size,
           modifiedAt: stat.mtime.toISOString(),
+          locked: !!locks[name],
+          commentCount: (comments[name] || []).length,
         })
       }
     }
@@ -140,16 +181,278 @@ app.get('/api/files/:name/download', (req, res) => {
   res.download(full, path.basename(full))
 })
 
-// 删除文件
-app.delete('/api/files/:name', async (req, res) => {
-  const full = resolveSafe(req.params.name)
+// 锁定文件
+app.post('/api/files/:name/lock', async (req, res) => {
+  const name = path.basename(req.params.name)
+  const full = resolveSafe(name)
   if (!full) return res.status(400).json({ error: '文件名非法' })
   if (!fs.existsSync(full)) return res.status(404).json({ error: '文件不存在' })
   try {
+    const locks = await loadLocks()
+    locks[name] = true
+    await saveLocks(locks)
+    res.json({ message: '已锁定', name })
+  } catch (err) {
+    res.status(500).json({ error: '锁定失败：' + err.message })
+  }
+})
+
+// 解锁文件
+app.post('/api/files/:name/unlock', async (req, res) => {
+  const name = path.basename(req.params.name)
+  const full = resolveSafe(name)
+  if (!full) return res.status(400).json({ error: '文件名非法' })
+  if (!fs.existsSync(full)) return res.status(404).json({ error: '文件不存在' })
+  try {
+    const locks = await loadLocks()
+    delete locks[name]
+    await saveLocks(locks)
+    res.json({ message: '已解锁', name })
+  } catch (err) {
+    res.status(500).json({ error: '解锁失败：' + err.message })
+  }
+})
+
+// 删除单个文件（已锁定的拒绝删除）
+app.delete('/api/files/:name', async (req, res) => {
+  const name = path.basename(req.params.name)
+  const full = resolveSafe(name)
+  if (!full) return res.status(400).json({ error: '文件名非法' })
+  if (!fs.existsSync(full)) return res.status(404).json({ error: '文件不存在' })
+  try {
+    const locks = await loadLocks()
+    if (locks[name]) {
+      return res.status(409).json({ error: '文件已锁定，请先解锁再删除' })
+    }
     await fsp.unlink(full)
+    delete locks[name]
+    await saveLocks(locks)
     res.json({ message: '删除成功' })
   } catch (err) {
     res.status(500).json({ error: '删除失败：' + err.message })
+  }
+})
+
+// 批量删除（body: { names: [] }，跳过不存在的和已锁定的）
+app.post('/api/files/batch-delete', async (req, res) => {
+  const { names } = req.body || {}
+  if (!Array.isArray(names) || names.length === 0) {
+    return res.status(400).json({ error: '未指定要删除的文件' })
+  }
+  try {
+    const locks = await loadLocks()
+    const deleted = []
+    const skipped = []
+    for (const raw of names) {
+      const name = path.basename(String(raw))
+      const full = resolveSafe(name)
+      if (!full) {
+        skipped.push({ name, reason: '文件名非法' })
+        continue
+      }
+      if (!fs.existsSync(full)) {
+        skipped.push({ name, reason: '文件不存在' })
+        continue
+      }
+      if (locks[name]) {
+        skipped.push({ name, reason: '已锁定' })
+        continue
+      }
+      await fsp.unlink(full)
+      delete locks[name]
+      deleted.push(name)
+    }
+    await saveLocks(locks)
+    res.json({ message: `删除成功 ${deleted.length} 个`, deleted, skipped })
+  } catch (err) {
+    res.status(500).json({ error: '批量删除失败：' + err.message })
+  }
+})
+
+// 全部删除（跳过已锁定的）
+app.post('/api/files/delete-all', async (req, res) => {
+  try {
+    const names = await fsp.readdir(STORAGE_DIR)
+    const locks = await loadLocks()
+    let deleted = 0
+    const skipped = []
+    for (const name of names) {
+      const full = path.join(STORAGE_DIR, name)
+      const stat = await fsp.stat(full).catch(() => null)
+      if (!stat || !stat.isFile()) continue
+      if (locks[name]) {
+        skipped.push(name)
+        continue
+      }
+      await fsp.unlink(full)
+      delete locks[name]
+      deleted++
+    }
+    await saveLocks(locks)
+    res.json({ message: `已删除 ${deleted} 个文件`, deleted, skipped })
+  } catch (err) {
+    res.status(500).json({ error: '全部删除失败：' + err.message })
+  }
+})
+
+// --- 留言功能 ---
+
+// 获取客户端真实 IP（优先 X-Forwarded-For，其次 socket 地址）
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for']
+  if (xff) return String(xff).split(',')[0].trim()
+  return (req.socket && req.socket.remoteAddress) || req.ip || ''
+}
+
+// 查询某文件下的留言（按时间倒序）
+app.get('/api/files/:name/comments', async (req, res) => {
+  const name = req.params.name
+  try {
+    const all = await loadComments()
+    const list = (all[name] || []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    res.json({ comments: list })
+  } catch (err) {
+    res.status(500).json({ error: '读取留言失败：' + err.message })
+  }
+})
+
+// 新增留言（body: { name?, content }），自动记录发送人 IP
+app.post('/api/files/:name/comments', async (req, res) => {
+  const name = req.params.name
+  const { name: customName, content } = req.body || {}
+  if (typeof content !== 'string' || !content.trim()) {
+    return res.status(400).json({ error: '留言内容不能为空' })
+  }
+  try {
+    const all = await loadComments()
+    if (!Array.isArray(all[name])) all[name] = []
+    const comment = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      name: typeof customName === 'string' ? customName.trim() : '',
+      ip: clientIp(req),
+      content: content.trim(),
+      createdAt: new Date().toISOString(),
+    }
+    all[name].push(comment)
+    await saveComments(all)
+    res.status(201).json({ message: '留言成功', comment })
+  } catch (err) {
+    res.status(500).json({ error: '留言失败：' + err.message })
+  }
+})
+
+// --- 大文件分片上传 ---
+// 分片暂存目录（不放 storage，避免出现在文件列表）
+const CHUNKS_DIR = path.join(__dirname, 'chunks')
+
+// 分片用内存暂存，路由里再写盘（这样 body 里 fileHash/chunkIndex 一定已解析）
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 单分片最大 50MB
+})
+
+// 文件哈希只保留安全字符，防止路径穿越
+function safeHash(h) {
+  return String(h || '').replace(/[^a-zA-Z0-9_-]/g, '')
+}
+
+// 上传单个分片（multipart：chunk 文件 + fileHash + chunkIndex）
+app.post('/api/Big-files/upload', chunkUpload.single('chunk'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: '未收到分片' })
+  const fileHash = safeHash(req.body.fileHash)
+  const chunkIndex = Number(req.body.chunkIndex)
+  if (!fileHash) return res.status(400).json({ error: '缺少 fileHash' })
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+    return res.status(400).json({ error: 'chunkIndex 非法' })
+  }
+  try {
+    const dir = path.join(CHUNKS_DIR, fileHash)
+    fs.mkdirSync(dir, { recursive: true })
+    await fsp.writeFile(path.join(dir, String(chunkIndex)), req.file.buffer)
+    res.json({ ok: true, chunkIndex })
+  } catch (err) {
+    res.status(500).json({ error: '分片保存失败：' + err.message })
+  }
+})
+
+// 查询某文件已上传的分片索引（?fileHash=xxx）
+app.get('/api/Big-files/status', async (req, res) => {
+  const fileHash = safeHash(req.query.fileHash)
+  if (!fileHash) return res.status(400).json({ error: '缺少 fileHash' })
+  const dir = path.join(CHUNKS_DIR, fileHash)
+  let uploaded = []
+  try {
+    const names = await fsp.readdir(dir)
+    uploaded = names
+      .filter((n) => /^\d+$/.test(n))
+      .map(Number)
+      .sort((a, b) => a - b)
+  } catch (e) {
+    // 目录不存在 → 视为 0 个分片
+  }
+  res.json({ uploaded })
+})
+
+// 合并分片（body: { fileHash, fileName, totalChunks }）
+app.post('/api/Big-files/merge', async (req, res) => {
+  const fileHash = safeHash(req.body.fileHash)
+  const fileName = path.basename(String(req.body.fileName || ''))
+  if (!fileHash) return res.status(400).json({ error: '缺少 fileHash' })
+  if (!fileName || fileName === '.' || fileName === '..') {
+    return res.status(400).json({ error: 'fileName 非法' })
+  }
+  const dir = path.join(CHUNKS_DIR, fileHash)
+  if (!fs.existsSync(dir)) {
+    return res.status(404).json({ error: '分片不存在，请重新上传' })
+  }
+  try {
+    const total = Number(req.body.totalChunks) || (await fsp.readdir(dir)).length
+    const destFull = path.join(STORAGE_DIR, uniqueName(fileName))
+    const out = fs.createWriteStream(destFull)
+    for (let i = 0; i < total; i++) {
+      const chunkFile = path.join(dir, String(i))
+      if (!fs.existsSync(chunkFile)) {
+        out.destroy()
+        await fsp.unlink(destFull).catch(() => {})
+        return res.status(400).json({ error: `缺少第 ${i} 个分片，无法合并` })
+      }
+      await new Promise((resolve, reject) => {
+        const rs = fs.createReadStream(chunkFile)
+        rs.on('error', reject)
+        out.on('error', reject)
+        rs.pipe(out, { end: false })
+        rs.on('end', resolve)
+      })
+    }
+    await new Promise((resolve, reject) => {
+      out.on('finish', resolve)
+      out.on('error', reject)
+      out.end()
+    })
+    // 合并成功后清理分片目录
+    await fsp.rm(dir, { recursive: true, force: true }).catch(() => {})
+    const stat = await fsp.stat(destFull)
+    res.json({ message: '合并成功', file: { name: path.basename(destFull), size: stat.size } })
+  } catch (err) {
+    res.status(500).json({ error: '合并失败：' + err.message })
+  }
+})
+
+// 删除某文件下的一条留言
+app.delete('/api/files/:name/comments/:id', async (req, res) => {
+  const name = req.params.name
+  const id = req.params.id
+  try {
+    const all = await loadComments()
+    const list = all[name] || []
+    const idx = list.findIndex((c) => c.id === id)
+    if (idx === -1) return res.status(404).json({ error: '留言不存在' })
+    list.splice(idx, 1)
+    if (list.length === 0) delete all[name]
+    await saveComments(all)
+    res.json({ message: '留言已删除' })
+  } catch (err) {
+    res.status(500).json({ error: '删除留言失败：' + err.message })
   }
 })
 

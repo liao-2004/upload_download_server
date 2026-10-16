@@ -52,7 +52,7 @@ const uploadFile = async (file) => {
   const fileHash = await calcHash(file)
   const chunks = createChunks(file)
 
-  const { data } = await resumeUpload()
+  const { data } = await resumeUpload(fileHash)
 
   const uploaded = new Set(data.uploaded)
   let uploadedSize = uploaded.size * CHUNK_SIZE

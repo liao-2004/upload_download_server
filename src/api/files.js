@@ -41,9 +41,53 @@ export async function readContent(name) {
   return handle(res)
 }
 
+// 查询某文件的留言
+export async function listComments(name) {
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}/comments`)
+  const { comments } = await handle(res)
+  return comments || []
+}
+
+// 新增留言（name 为自定义昵称，可留空；后端会自动记录 IP）
+export async function addComment(name, { name: customName, content }) {
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: customName, content }),
+  })
+  return handle(res)
+}
+
 // 删除文件
 export async function deleteFile(name) {
   const res = await fetch(`${BASE}/${encodeURIComponent(name)}`, { method: 'DELETE' })
+  return handle(res)
+}
+
+// 锁定 / 解锁文件
+export async function lockFile(name) {
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}/lock`, { method: 'POST' })
+  return handle(res)
+}
+
+export async function unlockFile(name) {
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}/unlock`, { method: 'POST' })
+  return handle(res)
+}
+
+// 批量删除（跳过已锁定的）
+export async function deleteMany(names) {
+  const res = await fetch(`${BASE}/batch-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names }),
+  })
+  return handle(res)
+}
+
+// 全部删除（跳过已锁定的）
+export async function deleteAll() {
+  const res = await fetch(`${BASE}/delete-all`, { method: 'POST' })
   return handle(res)
 }
 

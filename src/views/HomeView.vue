@@ -45,7 +45,16 @@
     <section class="card">
       <div class="list-head">
         <h2>服务器文件</h2>
-        <button class="ghost" @click="refresh">刷新</button>
+        <div class="list-head-btns">
+          <button class="ghost danger" @click="onDeleteAll">全部删除</button>
+          <button class="ghost" @click="refresh">刷新</button>
+        </div>
+      </div>
+
+      <div v-if="selected.size > 0" class="batch-bar">
+        <span class="hint">已选 {{ selected.size }} 个文件</span>
+        <button class="ghost danger" @click="onBatchDelete">批量删除</button>
+        <button class="ghost" @click="clearSelection">取消选择</button>
       </div>
 
       <p v-if="loading" class="hint">加载中…</p>
@@ -54,6 +63,7 @@
       <table v-else class="files">
         <thead>
           <tr>
+            <th class="sel"><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th>
             <th>文件名</th>
             <th>大小</th>
             <th>修改时间</th>
@@ -61,16 +71,81 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="f in files" :key="f.name">
-            <td class="name">{{ f.name }}</td>
-            <td>{{ formatSize(f.size) }}</td>
-            <td>{{ formatTime(f.modifiedAt) }}</td>
-            <td class="actions">
-              <button class="ghost" @click="onView(f.name)">查看</button>
-              <a class="btn ghost" :href="downloadUrl(f.name)">下载</a>
-              <button class="ghost danger" @click="onDelete(f.name)">删除</button>
-            </td>
-          </tr>
+          <template v-for="f in files" :key="f.name">
+            <tr>
+              <td class="sel">
+                <input
+                  type="checkbox"
+                  :checked="selected.has(f.name)"
+                  :disabled="f.locked"
+                  @change="toggleSelect(f.name)"
+                />
+              </td>
+              <td class="name">
+                {{ f.name }}
+                <span v-if="f.locked" class="lock-badge">已锁定</span>
+              </td>
+              <td>{{ formatSize(f.size) }}</td>
+              <td>{{ formatTime(f.modifiedAt) }}</td>
+              <td class="actions">
+                <button class="ghost" @click="onView(f.name)">查看</button>
+                <a class="btn ghost" :href="downloadUrl(f.name)">下载</a>
+                <button class="ghost" :class="f.locked ? 'lock-on' : ''" @click="onToggleLock(f)">
+                  {{ f.locked ? '解锁' : '锁定' }}
+                </button>
+                <button
+                  class="ghost"
+                  :style="{border:'0px'}"
+                  :class="commentOpen[f.name] ? 'comment-open' : ''"
+                  :title="'留言 ' + (f.commentCount || 0)"
+                  @click="toggleComments(f.name)"
+                >
+                  <span class="chev" :style="{fontSize:'26px'}">{{ commentOpen[f.name] ? '▴' : '▾' }}</span>
+                  <span v-if="f.commentCount" class="count-badge">{{ f.commentCount }}</span>
+                </button>
+              </td>
+            </tr>
+            <!-- 文件下的留言区 -->
+            <tr v-if="commentOpen[f.name]" class="comment-row">
+              <td colspan="5">
+                <div class="comment-box">
+                  <div class="comment-head">
+                    <span class="hint">留言（{{ (comments[f.name] || []).length }}）</span>
+                  </div>
+
+                  <p v-if="commentLoading[f.name]" class="hint">加载留言中…</p>
+                  <p v-else-if="(comments[f.name] || []).length === 0" class="hint">暂无留言</p>
+                  <ul v-else class="comment-list">
+                    <li v-for="c in comments[f.name]" :key="c.id">
+                      <div class="comment-meta">
+                        <strong class="c-name">{{ c.name || c.ip || '匿名' }}</strong>
+                        <span class="c-ip">{{ c.ip }}</span>
+                        <time>{{ formatTime(c.createdAt) }}</time>
+                      </div>
+                      <div class="c-content">{{ c.content }}</div>
+                    </li>
+                  </ul>
+
+                  <form class="comment-form" @submit.prevent="onComment(f)">
+                    <input
+                      v-model="draft(f.name).name"
+                      placeholder="自定义昵称（可留空，默认显示IP）"
+                    />
+                    <textarea
+                      v-model="draft(f.name).text"
+                      rows="2"
+                      placeholder="写下留言…"
+                    ></textarea>
+                    <div class="comment-form-foot">
+                      <button class="ghost" :disabled="commentSending[f.name]">
+                        {{ commentSending[f.name] ? '发送中…' : '发送' }}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </section>
@@ -89,14 +164,19 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import {
   listFiles,
   uploadFiles,
   createFile,
   readContent,
-  deleteFile,
   downloadUrl,
+  listComments,
+  addComment,
+  lockFile,
+  unlockFile,
+  deleteMany,
+  deleteAll,
 } from '@/api/files'
 import Upload from '@/components/BigUpload/Upload.vue'
 import BigUpload from '@/components/BigUpload/BigUpload.vue'
@@ -114,6 +194,137 @@ const uploading = ref(false)
 
 // 查看文件弹窗
 const viewer = ref(null) // { name, content } | null
+
+// 批量选择：选中（未锁定）的文件名集合
+const selected = reactive(new Set())
+const selectedCount = computed(() => selected.size)
+const allSelected = computed(
+  () => files.value.length > 0 && files.value.every((f) => f.locked || selected.has(f.name)),
+)
+
+function toggleSelect(name) {
+  if (selected.has(name)) selected.delete(name)
+  else selected.add(name)
+}
+
+function toggleAll(e) {
+  if (e.target.checked) {
+    files.value.forEach((f) => {
+      if (!f.locked) selected.add(f.name)
+    })
+  } else {
+    selected.clear()
+  }
+}
+
+function clearSelection() {
+  selected.clear()
+}
+
+// 锁定 / 解锁
+async function onToggleLock(f) {
+  try {
+    if (f.locked) {
+      await unlockFile(f.name)
+      f.locked = false
+      notify('ok', '已解锁')
+    } else {
+      await lockFile(f.name)
+      f.locked = true
+      notify('ok', '已锁定')
+    }
+  } catch (e) {
+    notify('err', e.message)
+  }
+}
+
+// 批量删除（仅删除选中的、未锁定的文件）
+async function onBatchDelete() {
+  if (selected.size === 0) return
+  if (!confirm(`确定删除选中的 ${selected.size} 个文件？已锁定的文件会被跳过。`)) return
+  try {
+    const r = await deleteMany([...selected])
+    notify('ok', r.message)
+    clearSelection()
+    refresh()
+  } catch (e) {
+    notify('err', e.message)
+  }
+}
+
+// 全部删除（跳过已锁定的文件）
+async function onDeleteAll() {
+  const total = files.value.length
+  if (total === 0) {
+    notify('err', '没有可删除的文件')
+    return
+  }
+  const lockedCount = files.value.filter((f) => f.locked).length
+  const msg = lockedCount
+    ? `共 ${total} 个文件，其中 ${lockedCount} 个已锁定将被跳过。确定删除其余文件？`
+    : `确定删除全部 ${total} 个文件？`
+  if (!confirm(msg)) return
+  try {
+    const r = await deleteAll()
+    notify('ok', r.message)
+    clearSelection()
+    refresh()
+  } catch (e) {
+    notify('err', e.message)
+  }
+}
+
+// 留言：按文件名保存展开状态、留言列表、草稿、加载/发送状态
+const commentOpen = reactive({})
+const comments = reactive({})
+const commentDraft = reactive({})
+const commentLoading = reactive({})
+const commentSending = reactive({})
+
+// 取（并初始化）某个文件的留言表单草稿
+function draft(name) {
+  if (!commentDraft[name]) commentDraft[name] = { name: '', text: '' }
+  return commentDraft[name]
+}
+
+// 展开 / 收起某文件的留言区，首次展开时加载留言
+async function toggleComments(name) {
+  commentOpen[name] = !commentOpen[name]
+  if (commentOpen[name] && !comments[name]) {
+    commentLoading[name] = true
+    try {
+      comments[name] = await listComments(name)
+    } catch (e) {
+      notify('err', e.message)
+    } finally {
+      commentLoading[name] = false
+    }
+  }
+}
+
+// 提交留言
+async function onComment(f) {
+  const name = f.name
+  const d = draft(name)
+  const text = (d.text || '').trim()
+  if (!text) {
+    notify('err', '请输入留言内容')
+    return
+  }
+  commentSending[name] = true
+  try {
+    const c = await addComment(name, { name: (d.name || '').trim(), content: text })
+    if (!comments[name]) comments[name] = []
+    comments[name].unshift(c) // 后端返回倒序，新留言放最前
+    f.commentCount = (f.commentCount || 0) + 1
+    d.text = ''
+    notify('ok', '留言成功')
+  } catch (e) {
+    notify('err', e.message)
+  } finally {
+    commentSending[name] = false
+  }
+}
 
 function notify(type, text) {
   message.value = { type, text }
@@ -142,6 +353,35 @@ async function refresh() {
     loading.value = false
   }
 }
+
+// 10 秒静默轮询：刷新文件列表 + 已展开的留言区
+let pollTimer = null
+
+async function autoRefresh() {
+  try {
+    files.value = await listFiles()
+  } catch (e) {
+    // 后台刷新失败静默，不影响用户操作
+  }
+  const names = Object.keys(commentOpen)
+  for (const name of names) {
+    if (!commentOpen[name]) continue
+    try {
+      comments[name] = await listComments(name)
+    } catch (e) {
+      // 静默
+    }
+  }
+}
+
+onMounted(() => {
+  refresh()
+  pollTimer = setInterval(autoRefresh, 10000)
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
 
 async function onCreate() {
   if (!newName.value.trim()) {
@@ -182,19 +422,6 @@ async function onView(name) {
     notify('err', e.message)
   }
 }
-
-async function onDelete(name) {
-  if (!confirm(`确定删除「${name}」？`)) return
-  try {
-    await deleteFile(name)
-    notify('ok', '删除成功')
-    refresh()
-  } catch (e) {
-    notify('err', e.message)
-  }
-}
-
-onMounted(refresh)
 </script>
 
 <style scoped>
@@ -272,6 +499,23 @@ button.danger {
   align-items: center;
   margin-bottom: 0.5rem;
 }
+.list-head-btns {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px dashed var(--color-border, #444);
+  border-radius: 6px;
+}
+.batch-bar .hint {
+  margin: 0;
+}
 .files {
   width: 100%;
   border-collapse: collapse;
@@ -286,10 +530,108 @@ button.danger {
 .files .name {
   word-break: break-all;
 }
+.files .sel {
+  width: 2rem;
+  text-align: center;
+}
+.files input[type='checkbox'] {
+  width: auto;
+  display: inline-block;
+  margin: 0;
+  vertical-align: middle;
+}
+.lock-badge {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  color: #e0a94f;
+  border: 1px solid rgba(224, 169, 79, 0.5);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  white-space: nowrap;
+}
+button.lock-on {
+  color: #e0a94f;
+  border-color: rgba(224, 169, 79, 0.6);
+}
 .actions {
   display: flex;
   gap: 0.4rem;
   flex-wrap: wrap;
+}
+/* 文件下的留言区 */
+.comment-row td {
+  background: hsla(160, 100%, 37%, 0.04);
+}
+.comment-box {
+  padding: 0.25rem 0.5rem;
+}
+.comment-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+.comment-list {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+}
+.comment-list li {
+  border: 1px solid var(--color-border, #333);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.4rem;
+  background: var(--color-background, #1a1a1a);
+}
+.comment-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+.c-name {
+  font-size: 0.85rem;
+  color: hsla(160, 100%, 37%, 1);
+}
+.c-ip {
+  opacity: 0.55;
+  font-size: 0.75rem;
+}
+.comment-meta time {
+  opacity: 0.6;
+  margin-left: auto;
+}
+.c-content {
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: inherit;
+}
+.comment-form textarea {
+  margin-bottom: 0.5rem;
+}
+.comment-form-foot {
+  text-align: right;
+}
+/* 文件行的留言入口：下拉箭头 + 数量徽标 */
+.chev {
+  font-size: 0.7rem;
+  line-height: 1;
+  color: #757171;
+}
+button.comment-open {
+  color: hsla(160, 100%, 37%, 1);
+  border-color: hsla(160, 100%, 37%, 0.5);
+}
+.count-badge { 
+  font-size: 0.72rem; 
+  color: hsla(160, 100%, 37%, 1);
+  border-radius: 10px;
+  padding: 0 0.4rem;
+  line-height: 1.3;
 }
 .toast {
   padding: 0.6rem 1rem;

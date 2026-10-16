@@ -8,10 +8,11 @@
       <p class="hint">从电脑选择文件上传到服务器（支持多选，单文件最大 2GB）。</p>
     </template>
 
-    <template #Uploadbutton="{ onUpload }">
+    <template #Uploadbutton="{ onUpload, uploading }">
       <input
         type="file"
         multiple
+        :disabled="uploading"
         @change="e => onUpload(e.target.files)"
       />
     </template>
@@ -43,5 +44,10 @@ textarea {
   background: transparent;
   color: inherit;
   font-family: inherit;
+}
+.hint {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin: 0.4rem 0;
 }
 </style>

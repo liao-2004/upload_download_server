@@ -1,37 +1,38 @@
-// 文件管理接口封装，统一走 /api（由 Vite 代理转发到 Express 后端）
+// 大文件分片上传接口封装，统一走 /api/Big-files（由 Vite 代理 / Nginx 转发到后端）
+import axios from 'axios'
 
-const BASE = '/api/Big-files'
+const http = axios.create({ baseURL: '/api/Big-files' })
 
-// 上传文件（FileList 或 File[]）
-export async function uploadFiles(fileList) {
-  const form = new FormData()
-  for (const f of fileList) form.append('file', f)
-  const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form })
-  return handle(res)
+// 查询某文件已上传的分片索引（?fileHash=xxx），返回 { data: { uploaded: [...] } }
+export async function resumeUpload(fileHash) {
+  const { data } = await http.get('/status', { params: { fileHash } })
+  return { data }
 }
 
-export async function resumeUpload() {
-    const res = fetch(`${BASE}/status`, { method: 'get',  params: { fileHash } })
-    return
-}
-
-export async function SingleUpload(uploadedSize,progress,file,formData) {
-    axios.post(`${BASE}/upload`, formData, {
-      onUploadProgress(e) {
-        uploadedSize += e.loaded
-        progress.value = +(uploadedSize / file.size * 100).toFixed(2)
+// 上传单个分片（formData 内含 chunk / chunkIndex / fileHash），返回 axios promise 便于 await
+export async function SingleUpload(uploadedSize, progress, file, formData) {
+  return http.post('/upload', formData, {
+    onUploadProgress(e) {
+      // e.loaded 为该分片已上传字节数；uploadedSize 为之前已上传总量
+      const total = e.total || 0
+      const loaded = uploadedSize + total
+      if (file.size > 0) {
+        progress.value = +((loaded / file.size) * 100).toFixed(2)
       }
-    })
-}
-
-export async function Doneload( fileHash,file,chunks){
-    axios.post(`${BASE}/merge`, {
-    fileHash,
-    fileName: file.name,
-    totalChunks: chunks.length
+    },
   })
 }
+
+// 合并分片
+export async function Doneload(fileHash, file, chunks) {
+  return http.post('/merge', {
+    fileHash,
+    fileName: file.name,
+    totalChunks: chunks.length,
+  })
+}
+
 // 下载地址（直接给 <a href> 用）
 export function downloadUrl(name) {
-  return `${BASE}/${encodeURIComponent(name)}/download`
+  return `/api/Big-files/${encodeURIComponent(name)}/download`
 }
