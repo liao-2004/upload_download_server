@@ -2,10 +2,12 @@
 import { ref } from 'vue'
 import { RouterView } from 'vue-router'
 
-// 顶部滚动公告横幅
+// 顶部滚动公告横幅（关闭后缓存 1 小时，到期自动重新出现）
 const NOTICE_KEY = 'notice_dismissed'
+const HIDE_MS = 60 * 60 * 1000 // 1 小时
 const NOTICE_URL = 'https://www.aliyun.com/benefit?tid=product&utm_content=se_1023591267'
-const showNotice = ref(localStorage.getItem(NOTICE_KEY) !== '1')
+const dismissedAt = Number(localStorage.getItem(NOTICE_KEY) || 0)
+const showNotice = ref(!dismissedAt || Date.now() - dismissedAt > HIDE_MS)
 
 function onNoticeClick() {
   window.open(NOTICE_URL, '_blank')
@@ -13,7 +15,7 @@ function onNoticeClick() {
 
 function closeNotice() {
   showNotice.value = false
-  localStorage.setItem(NOTICE_KEY, '1')
+  localStorage.setItem(NOTICE_KEY, String(Date.now()))
 }
 </script>
 
