@@ -1,14 +1,5 @@
 <template>
   <main class="fm">
-    <!-- 顶部滚动公告横幅（可关闭，点击跳转） -->
-    <div v-if="showNotice" class="notice-bar" @click="onNoticeClick">
-      <div class="notice-track">
-        <span class="notice-text">服务到期2026年12月1日过期、请及时续费，以免影响正常使用，谢谢配合！</span>
-        <span class="notice-text">服务到期2026年12月1日过期、请及时续费，以免影响正常使用，谢谢配合！</span>
-      </div>
-      <button class="notice-close" title="关闭" @click.stop="closeNotice">×</button>
-    </div>
-
     <h1>文件管理</h1>
 
     <p v-if="message" :class="['toast', message.type]">{{ message.text }}</p>
@@ -205,20 +196,6 @@ const newContent = ref('')
 // 上传
 const fileInput = ref(null)
 const uploading = ref(false)
-
-// 顶部公告横幅
-const NOTICE_KEY = 'notice_dismissed'
-const NOTICE_URL = 'https://www.aliyun.com/benefit?tid=product&utm_content=se_1023591267'
-const showNotice = ref(localStorage.getItem(NOTICE_KEY) !== '1')
-
-function onNoticeClick() {
-  window.open(NOTICE_URL, '_blank')
-}
-
-function closeNotice() {
-  showNotice.value = false
-  localStorage.setItem(NOTICE_KEY, '1')
-}
 
 // 查看文件弹窗
 const viewer = ref(null) // { name, content } | null
