@@ -24,7 +24,6 @@ function closeNotice() {
   <div v-if="showNotice" class="notice-bar" @click="onNoticeClick">
     <div class="notice-track">
       <span class="notice-text">服务至<span class="notice-date">2026年12月1日</span>到期、请及时续费，以免影响正常使用，谢谢配合！</span>
-      <span class="notice-text">服务至<span class="notice-date">2026年12月1日</span>到期、请及时续费，以免影响正常使用，谢谢配合！</span>
     </div>
     <button class="notice-close" title="关闭" @click.stop="closeNotice">×</button>
   </div>
@@ -50,7 +49,7 @@ function closeNotice() {
 .notice-track {
   display: flex;
   white-space: nowrap;
-  animation: notice-scroll 16s linear infinite;
+  animation: notice-scroll 30s linear infinite;
 }
 .notice-bar:hover .notice-track {
   animation-play-state: paused;
@@ -59,6 +58,7 @@ function closeNotice() {
   padding-right: 4rem;
   font-size: 0.92rem;
   color: #7a4e00;
+  flex-shrink: 0;
 }
 .notice-date {
   color: #e02020;
@@ -66,10 +66,10 @@ function closeNotice() {
 }
 @keyframes notice-scroll {
   from {
-    transform: translateX(0);
+    transform: translateX(100vw); /* 从页面右边缘出发 */
   }
   to {
-    transform: translateX(-50%);
+    transform: translateX(-20vw); /* 扫到左侧后很快回右，缩短空档 */
   }
 }
 .notice-close {
