@@ -1,29 +1,66 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { RouterView } from 'vue-router'
 
-// 顶部滚动公告横幅（关闭后缓存 1 小时，到期自动重新出现）
+// 顶部滚动公告横幅：配置(url/content/highlight)从后端 /api/notice 拉取，关闭后缓存 1 小时
 const NOTICE_KEY = 'notice_dismissed'
 const HIDE_MS = 60 * 60 * 1000 // 1 小时
-const NOTICE_URL = 'https://www.aliyun.com/benefit?tid=product&utm_content=se_1023591267'
+const DEFAULT_NOTICE = {
+  url: 'https://www.aliyun.com/benefit?tid=product&utm_content=se_1023591267',
+  content: '服务至2026年12月1日到期、请及时续费，以免影响正常使用，谢谢配合！',
+  highlight: '2026年12月1日',
+}
+const notice = ref({ ...DEFAULT_NOTICE })
 const dismissedAt = Number(localStorage.getItem(NOTICE_KEY) || 0)
 const showNotice = ref(!dismissedAt || Date.now() - dismissedAt > HIDE_MS)
 
+// 把 content 按 highlight 切成片段，用于渲染红字高亮
+const noticeSegments = computed(() => {
+  const { content, highlight } = notice.value
+  if (!highlight) return [{ text: content, highlight: false }]
+  const parts = content.split(highlight)
+  const segs = []
+  parts.forEach((p, i) => {
+    if (p) segs.push({ text: p, highlight: false })
+    if (i < parts.length - 1) segs.push({ text: highlight, highlight: true })
+  })
+  return segs
+})
+
 function onNoticeClick() {
-  window.open(NOTICE_URL, '_blank')
+  window.open(notice.value.url, '_blank')
 }
 
 function closeNotice() {
   showNotice.value = false
   localStorage.setItem(NOTICE_KEY, String(Date.now()))
 }
+
+onMounted(async () => {
+  try {
+    const res = await fetch('/api/notice')
+    if (res.ok) {
+      const data = await res.json()
+      if (data) notice.value = { ...DEFAULT_NOTICE, ...data }
+    }
+  } catch (e) {
+    // 拉取失败时保留默认配置
+  }
+})
 </script>
 
 <template>
   <!-- 顶部滚动公告横幅（贴顶全宽，可关闭，点击跳转） -->
   <div v-if="showNotice" class="notice-bar" @click="onNoticeClick">
     <div class="notice-track">
-      <span class="notice-text">服务至<span class="notice-date">2026年12月1日</span>到期、请及时续费，以免影响正常使用，谢谢配合！</span>
+      <span class="notice-text">
+        <span
+          v-for="(seg, i) in noticeSegments"
+          :key="i"
+          :class="seg.highlight ? 'notice-date' : ''"
+          >{{ seg.text }}</span
+        >
+      </span>
     </div>
     <button class="notice-close" title="关闭" @click.stop="closeNotice">×</button>
   </div>

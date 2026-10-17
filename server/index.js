@@ -85,6 +85,14 @@ async function saveLocks(data) {
 // 留言以 JSON 文件持久化在 server 目录下（不放入 storage，避免出现在文件列表）
 const COMMENTS_FILE = path.join(__dirname, 'comments.json')
 
+// 顶部横幅配置（放在 server 根目录，和 comments.json 同级）
+const NOTICE_FILE = path.join(__dirname, 'notice.json')
+const DEFAULT_NOTICE = {
+  url: 'https://www.aliyun.com/benefit?tid=product&utm_content=se_1023591267',
+  content: '服务至2026年12月1日到期、请及时续费，以免影响正常使用，谢谢配合！',
+  highlight: '2026年12月1日',
+}
+
 async function loadComments() {
   try {
     const raw = await fsp.readFile(COMMENTS_FILE, 'utf8')
@@ -122,6 +130,18 @@ app.get('/api/files', async (req, res) => {
     res.json({ files })
   } catch (err) {
     res.status(500).json({ error: '读取文件列表失败：' + err.message })
+  }
+})
+
+// 顶部横幅配置
+app.get('/api/notice', async (req, res) => {
+  try {
+    const raw = await fsp.readFile(NOTICE_FILE, 'utf8')
+    const data = JSON.parse(raw)
+    res.json({ ...DEFAULT_NOTICE, ...data })
+  } catch (e) {
+    if (e.code === 'ENOENT') return res.json(DEFAULT_NOTICE)
+    res.status(500).json({ error: '读取横幅配置失败：' + e.message })
   }
 })
 
