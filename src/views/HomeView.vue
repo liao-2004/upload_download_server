@@ -156,14 +156,20 @@
       </div>
     </section>
 
-    <!-- 查看弹窗 -->
+    <!-- 查看弹窗：图片走 img 预览，其它文件显示文本内容 -->
     <div v-if="viewer" class="modal" @click.self="viewer = null">
       <div class="modal-box">
         <div class="modal-head">
           <h3>{{ viewer.name }}</h3>
           <button class="ghost" @click="viewer = null">关闭</button>
         </div>
-        <pre>{{ viewer.content }}</pre>
+        <img
+          v-if="viewer.type === 'image'"
+          :src="viewer.url"
+          class="viewer-img"
+          alt="图片预览"
+        />
+        <pre v-else>{{ viewer.content }}</pre>
       </div>
     </div>
   </main>
@@ -435,7 +441,46 @@ async function onUpload(event) {
   }
 }
 
+// 可在线预览的图片后缀
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
+
+// 无法直接查看（二进制/专用格式），点击查看时提示下载
+const UNVIEWABLE_EXTS = [
+  // 压缩包
+  'zip', 'rar', '7z', 'tar', 'gz', 'gzip', 'bz2', 'xz', 'iso',
+  // 可执行文件
+  'exe', 'msi', 'dll', 'apk', 'bin', 'com', 'pkg', 'deb', 'rpm', 'jar',
+  // Office / 表格 / 文档
+  'xlsx', 'xls', 'docx', 'doc', 'pptx', 'ppt', 'odt', 'ods', 'pdf',
+  // 音视频
+  'mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv',
+  // 其它二进制
+  'psd', 'ai', 'dwg',
+]
+
+function extOf(name) {
+  return (name.split('.').pop() || '').toLowerCase()
+}
+
+function isImage(name) {
+  return IMAGE_EXTS.includes(extOf(name))
+}
+
+function isUnviewable(name) {
+  return UNVIEWABLE_EXTS.includes(extOf(name))
+}
+
 async function onView(name) {
+  // 图片文件：弹窗内直接预览原图（复用下载地址加载）
+  if (isImage(name)) {
+    viewer.value = { name, type: 'image', url: downloadUrl(name) }
+    return
+  }
+  // 压缩包 / 可执行文件 / Office 表格等：提示不可直接查看
+  if (isUnviewable(name)) {
+    notify('err', `“${name}”为不可直接查看的文件类型，请下载后用本地软件打开`)
+    return
+  }
   try {
     viewer.value = await readContent(name)
   } catch (e) {
@@ -744,5 +789,13 @@ button.comment-open {
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
+}
+.viewer-img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  padding: 1rem;
+  object-fit: contain;
 }
 </style>

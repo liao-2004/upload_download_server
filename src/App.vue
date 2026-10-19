@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { RouterView } from 'vue-router'
 
 // 顶部滚动公告横幅：配置(url/content/highlight)从后端 /api/notice 拉取，关闭后缓存 1 小时
@@ -36,7 +36,25 @@ function closeNotice() {
   localStorage.setItem(NOTICE_KEY, String(Date.now()))
 }
 
+// ---- 右下角广告弹窗：配置(url/title/text/image/enabled)从后端 /api/ad 拉取 ----
+const DEFAULT_AD = {
+  enabled: true,
+  url: 'https://example.com',
+  title: '推广',
+  text: '这里放你的推广文案，例如：点击了解最新优惠活动',
+  image: '', // 可选：图片路径，如 /api/ad/image/xx.png
+}
+const ad = ref({ ...DEFAULT_AD })
+const showAd = ref(false)
+const adImgFailed = ref(false) // 广告图片加载失败时隐藏弹窗，避免残留空黑框
+let adTimer = null
+
+function closeAd() {
+  showAd.value = false
+}
+
 onMounted(async () => {
+  // 横幅配置
   try {
     const res = await fetch('/api/notice')
     if (res.ok) {
@@ -46,6 +64,26 @@ onMounted(async () => {
   } catch (e) {
     // 拉取失败时保留默认配置
   }
+  // 广告配置
+  try {
+    const res = await fetch('/api/ad')
+    if (res.ok) {
+      const data = await res.json()
+      if (data) ad.value = { ...DEFAULT_AD, ...data }
+    }
+  } catch (e) {
+    // 拉取失败时保留默认配置
+  }
+  // 等配置加载完再决定是否弹广告，避免 enabled:false 时仍闪现
+  if (ad.value.enabled) {
+    adTimer = setTimeout(() => {
+      showAd.value = true
+    }, 2500)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (adTimer) clearTimeout(adTimer)
 })
 </script>
 
@@ -66,6 +104,20 @@ onMounted(async () => {
   </div>
 
   <RouterView />
+
+  <!-- 右下角广告弹窗（可关闭） -->
+  <transition name="ad-fade">
+    <div v-if="showAd && !adImgFailed" class="ad-pop">
+      <button class="ad-close" title="关闭" @click="closeAd">×</button>
+      <a :href="ad.url" target="_blank" rel="noopener noreferrer" class="ad-link">
+        <img v-if="ad.image" :src="ad.image" class="ad-img" alt="广告图" @error="adImgFailed = true" />
+        <div class="ad-overlay">
+          <span class="ad-title">{{ ad.title }}</span>
+          <span v-if="ad.text" class="ad-text">{{ ad.text }}</span>
+        </div>
+      </a>
+    </div>
+  </transition>
 </template>
 
 <style>
@@ -131,5 +183,83 @@ onMounted(async () => {
 /* 给页面留出横幅高度，避免遮挡内容 */
 body {
   padding-top: 2.4rem;
+}
+
+/* 右下角广告弹窗：图片占满，标题半透明浮层在左下角 */
+.ad-pop {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  width: 340px;
+  z-index: 1000;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  background: #000;
+}
+.ad-link {
+  position: relative;
+  display: block;
+  text-decoration: none;
+  color: #fff;
+}
+.ad-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+}
+.ad-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+  pointer-events: none;
+}
+.ad-title {
+  display: block;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+.ad-text {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.92);
+}
+.ad-close {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.45rem;
+  z-index: 2;
+  border: none;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ad-close:hover {
+  background: rgba(0, 0, 0, 0.6);
+}
+.ad-fade-enter-active,
+.ad-fade-leave-active {
+  transition: opacity 0.3s, transform 0.3s;
+}
+.ad-fade-enter-from,
+.ad-fade-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
 }
 </style>

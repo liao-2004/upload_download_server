@@ -93,6 +93,18 @@ const DEFAULT_NOTICE = {
   highlight: '2026年12月1日',
 }
 
+// 右下角广告配置（放在 server 根目录）
+const AD_FILE = path.join(__dirname, 'ad.json')
+// 广告图片目录：server/public（图片放这里，通过 /api/ad/image/:name 供前端加载）
+const AD_IMG_DIR = path.join(__dirname, 'public')
+const DEFAULT_AD = {
+  enabled: true,
+  url: 'https://example.com',
+  title: '推广',
+  text: '这里放你的推广文案，例如：点击了解最新优惠活动',
+  image: '', // 可选：图片路径，如 /api/ad/image/xx.png
+}
+
 async function loadComments() {
   try {
     const raw = await fsp.readFile(COMMENTS_FILE, 'utf8')
@@ -143,6 +155,32 @@ app.get('/api/notice', async (req, res) => {
     if (e.code === 'ENOENT') return res.json(DEFAULT_NOTICE)
     res.status(500).json({ error: '读取横幅配置失败：' + e.message })
   }
+})
+
+// 右下角广告配置
+app.get('/api/ad', async (req, res) => {
+  try {
+    const raw = await fsp.readFile(AD_FILE, 'utf8')
+    const data = JSON.parse(raw)
+    res.json({ ...DEFAULT_AD, ...data })
+  } catch (e) {
+    if (e.code === 'ENOENT') return res.json(DEFAULT_AD)
+    res.status(500).json({ error: '读取广告配置失败：' + e.message })
+  }
+})
+
+// 广告图片：从 server/public 目录按文件名返回（防路径穿越）
+app.get('/api/ad/image/:name', (req, res) => {
+  const name = path.basename(req.params.name)
+  if (!name || name === '.' || name === '..') {
+    return res.status(400).json({ error: '文件名非法' })
+  }
+  const full = path.join(AD_IMG_DIR, name)
+  if (path.dirname(full) !== AD_IMG_DIR) {
+    return res.status(400).json({ error: '文件名非法' })
+  }
+  if (!fs.existsSync(full)) return res.status(404).json({ error: '图片不存在' })
+  res.sendFile(full)
 })
 
 // 上传文件（表单字段名 file，支持多选）
