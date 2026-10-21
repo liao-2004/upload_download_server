@@ -284,6 +284,12 @@ app.delete('/api/files/:name', async (req, res) => {
     }
     await fsp.unlink(full)
     delete locks[name]
+    // 同步删除该文件的留言
+    const allComments = await loadComments()
+    if (allComments[name]) {
+      delete allComments[name]
+      await saveComments(allComments)
+    }
     await saveLocks(locks)
     res.json({ message: '删除成功' })
   } catch (err) {
@@ -299,8 +305,10 @@ app.post('/api/files/batch-delete', async (req, res) => {
   }
   try {
     const locks = await loadLocks()
+    const allComments = await loadComments()
     const deleted = []
     const skipped = []
+    let commentsChanged = false
     for (const raw of names) {
       const name = path.basename(String(raw))
       const full = resolveSafe(name)
@@ -318,8 +326,14 @@ app.post('/api/files/batch-delete', async (req, res) => {
       }
       await fsp.unlink(full)
       delete locks[name]
+      // 同步删除该文件的留言
+      if (allComments[name]) {
+        delete allComments[name]
+        commentsChanged = true
+      }
       deleted.push(name)
     }
+    if (commentsChanged) await saveComments(allComments)
     await saveLocks(locks)
     res.json({ message: `删除成功 ${deleted.length} 个`, deleted, skipped })
   } catch (err) {
@@ -332,8 +346,10 @@ app.post('/api/files/delete-all', async (req, res) => {
   try {
     const names = await fsp.readdir(STORAGE_DIR)
     const locks = await loadLocks()
+    const allComments = await loadComments()
     let deleted = 0
     const skipped = []
+    let commentsChanged = false
     for (const name of names) {
       const full = path.join(STORAGE_DIR, name)
       const stat = await fsp.stat(full).catch(() => null)
@@ -344,8 +360,14 @@ app.post('/api/files/delete-all', async (req, res) => {
       }
       await fsp.unlink(full)
       delete locks[name]
+      // 同步删除该文件的留言
+      if (allComments[name]) {
+        delete allComments[name]
+        commentsChanged = true
+      }
       deleted++
     }
+    if (commentsChanged) await saveComments(allComments)
     await saveLocks(locks)
     res.json({ message: `已删除 ${deleted} 个文件`, deleted, skipped })
   } catch (err) {
