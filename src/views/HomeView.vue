@@ -89,7 +89,7 @@
               <td>{{ formatSize(f.size) }}</td>
               <td>{{ formatTime(f.modifiedAt) }}</td>
               <td class="actions">
-                <button class="ghost" @click="onView(f.name)">查看</button>
+                <button class="ghost" @click="onView(f)">查看</button>
                 <a class="btn ghost" :href="downloadUrl(f.name)">下载</a>
                 <button class="ghost" :class="f.locked ? 'lock-on' : ''" @click="onToggleLock(f)">
                   {{ f.locked ? '解锁' : '锁定' }}
@@ -156,32 +156,48 @@
       </div>
     </section>
 
-    <!-- 查看弹窗：图片走 img 预览，其它文件显示文本内容 -->
-    <div v-if="viewer" class="modal" @click.self="viewer = null">
+    <!-- 查看弹窗：图片走在线编辑（缩放/拖拽/划线/裁剪/保存），文本可在线编辑 -->
+    <div v-if="viewer" class="modal" @mousedown="onModalDown" @click="onModalClick">
       <div class="modal-box">
         <div class="modal-head">
           <h3>{{ viewer.name }}</h3>
-          <button class="ghost" @click="viewer = null">关闭</button>
+          <button class="modal-close" title="关闭" @click="viewer = null">×</button>
         </div>
-        <img
+        <ImageEditor
           v-if="viewer.type === 'image'"
-          :src="viewer.url"
-          class="viewer-img"
-          alt="图片预览"
+          :name="viewer.name"
+          :url="viewer.url"
+          :locked="viewer.locked"
+          @saved="onImageSaved"
         />
-        <pre v-else>{{ viewer.content }}</pre>
+        <div v-else class="text-edit">
+          <p v-if="viewer.locked" class="locked-tip">该文件已锁定，不可编辑</p>
+          <textarea
+            v-model="editContent"
+            class="edit-text"
+            rows="18"
+            spellcheck="false"
+            :readonly="viewer.locked"
+          ></textarea>
+          <div class="edit-bar">
+            <button :disabled="viewer.locked || textSaving" @click="onSaveText">
+              {{ textSaving ? '保存中…' : '保存修改' }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </main>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import {
   listFiles,
   uploadFiles,
   createFile,
   readContent,
+  saveContent,
   downloadUrl,
   listComments,
   addComment,
@@ -193,6 +209,7 @@ import {
 } from '@/api/files'
 import Upload from '@/components/BigUpload/Upload.vue'
 import BigUpload from '@/components/BigUpload/BigUpload.vue'
+import ImageEditor from '@/components/FileViewer/ImageEditor.vue'
 const files = ref([])
 const loading = ref(false)
 const message = ref(null) // { type: 'ok' | 'err', text }
@@ -207,6 +224,25 @@ const uploading = ref(false)
 
 // 查看文件弹窗
 const viewer = ref(null) // { name, content } | null
+const editContent = ref('') // 文本在线编辑内容
+const textSaving = ref(false)
+
+// 弹窗打开时锁定背景页面滚动，关闭后恢复
+watch(viewer, (v) => {
+  document.body.style.overflow = v ? 'hidden' : ''
+})
+
+// 只有「在遮罩上按下、又在遮罩上松开」才关闭，避免拖选文字后松手误关
+let modalDownOnBackdrop = false
+function onModalDown(e) {
+  modalDownOnBackdrop = e.target === e.currentTarget
+}
+function onModalClick(e) {
+  if (e.target === e.currentTarget && modalDownOnBackdrop) {
+    viewer.value = null
+  }
+  modalDownOnBackdrop = false
+}
 
 // 批量选择：选中（未锁定）的文件名集合
 const selected = reactive(new Set())
@@ -407,6 +443,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer)
+  document.body.style.overflow = ''
 })
 
 async function onCreate() {
@@ -470,10 +507,12 @@ function isUnviewable(name) {
   return UNVIEWABLE_EXTS.includes(extOf(name))
 }
 
-async function onView(name) {
+async function onView(f) {
+  const name = f.name
+  const locked = !!f.locked
   // 图片文件：弹窗内直接预览原图（复用下载地址加载）
   if (isImage(name)) {
-    viewer.value = { name, type: 'image', url: downloadUrl(name) }
+    viewer.value = { name, type: 'image', url: downloadUrl(name), locked }
     return
   }
   // 压缩包 / 可执行文件 / Office 表格等：提示不可直接查看
@@ -482,10 +521,33 @@ async function onView(name) {
     return
   }
   try {
-    viewer.value = await readContent(name)
+    viewer.value = { ...(await readContent(name)), locked }
+    editContent.value = viewer.value.content || ''
   } catch (e) {
     notify('err', e.message)
   }
+}
+
+// 保存文本编辑
+async function onSaveText() {
+  if (!viewer.value) return
+  textSaving.value = true
+  try {
+    await saveContent(viewer.value.name, editContent.value)
+    viewer.value.content = editContent.value
+    notify('ok', '已保存')
+    viewer.value = null // 保存成功后关闭弹窗
+  } catch (e) {
+    notify('err', e.message)
+  } finally {
+    textSaving.value = false
+  }
+}
+
+// 图片编辑后保存完成
+function onImageSaved(name) {
+  notify('ok', `图片已保存：${name}`)
+  refresh()
 }
 </script>
 
@@ -783,6 +845,19 @@ button.comment-open {
   padding: 1rem;
   border-bottom: 1px solid var(--color-border, #444);
 }
+.modal-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 0 0.3rem;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.modal-close:hover {
+  opacity: 1;
+}
 .modal-box pre {
   padding: 1rem;
   overflow: auto;
@@ -797,5 +872,29 @@ button.comment-open {
   margin: 0 auto;
   padding: 1rem;
   object-fit: contain;
+}
+.text-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 1rem;
+}
+.text-edit .edit-text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-width: 0;
+  max-width: 100%;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  line-height: 1.5;
+}
+.edit-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+.locked-tip {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #e0a94f;
 }
 </style>

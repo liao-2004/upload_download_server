@@ -103,3 +103,24 @@ export async function deleteAll() {
 export function downloadUrl(name) {
   return `${BASE}/${encodeURIComponent(name)}/download`
 }
+
+// 在线编辑并保存文本内容
+export async function saveContent(name, content) {
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}/content`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+  return handle(res)
+}
+
+// 在线编辑图片后保存回原文件
+export async function saveImage(name, blob) {
+  const form = new FormData()
+  form.append('image', blob, name)
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}/image`, {
+    method: 'POST',
+    body: form,
+  })
+  return handle(res)
+}

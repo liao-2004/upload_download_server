@@ -231,6 +231,44 @@ app.get('/api/files/:name/content', async (req, res) => {
   }
 })
 
+// 在线编辑并保存文本文件内容（body: { content }）
+app.put('/api/files/:name/content', async (req, res) => {
+  const full = resolveSafe(req.params.name)
+  if (!full) return res.status(400).json({ error: '文件名非法' })
+  if (!fs.existsSync(full)) return res.status(404).json({ error: '文件不存在' })
+  const { content = '' } = req.body || {}
+  try {
+    await fsp.writeFile(full, String(content), 'utf8')
+    const stat = await fsp.stat(full)
+    res.json({ message: '保存成功', name: path.basename(full), size: stat.size })
+  } catch (err) {
+    res.status(500).json({ error: '保存失败：' + err.message })
+  }
+})
+
+// 在线编辑图片后保存回原文件（multipart: field 'image'）
+app.post('/api/files/:name/image', async (req, res) => {
+  const full = resolveSafe(req.params.name)
+  if (!full) return res.status(400).json({ error: '文件名非法' })
+  if (!fs.existsSync(full)) return res.status(404).json({ error: '文件不存在' })
+  try {
+    const mem = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('image')
+    mem(req, res, async (err) => {
+      if (err) return res.status(500).json({ error: '图片接收失败：' + err.message })
+      if (!req.file || !req.file.buffer) return res.status(400).json({ error: '未收到图片数据' })
+      try {
+        await fsp.writeFile(full, req.file.buffer)
+        const stat = await fsp.stat(full)
+        res.json({ message: '图片已保存', name: path.basename(full), size: stat.size })
+      } catch (e) {
+        res.status(500).json({ error: '图片保存失败：' + e.message })
+      }
+    })
+  } catch (err) {
+    res.status(500).json({ error: '图片保存失败：' + err.message })
+  }
+})
+
 // 下载文件
 app.get('/api/files/:name/download', (req, res) => {
   const full = resolveSafe(req.params.name)
