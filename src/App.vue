@@ -49,6 +49,9 @@ const showAd = ref(false)
 const adImgFailed = ref(false) // 广告图片加载失败时隐藏弹窗，避免残留空黑框
 let adTimer = null
 
+// ---- 右下角版本号：从后端 /api/version 拉取 ----
+const version = ref('')
+
 function closeAd() {
   showAd.value = false
 }
@@ -73,6 +76,16 @@ onMounted(async () => {
     }
   } catch (e) {
     // 拉取失败时保留默认配置
+  }
+  // 版本号
+  try {
+    const res = await fetch('/api/version')
+    if (res.ok) {
+      const data = await res.json()
+      if (data && data.version) version.value = data.version
+    }
+  } catch (e) {
+    // 静默
   }
   // 等配置加载完再决定是否弹广告，避免 enabled:false 时仍闪现
   if (ad.value.enabled) {
@@ -118,6 +131,9 @@ onBeforeUnmount(() => {
       </a>
     </div>
   </transition>
+
+  <!-- 右下角版本号 -->
+  <div v-if="version" class="version-badge">{{ version }}</div>
 </template>
 
 <style>
@@ -261,5 +277,17 @@ body {
 .ad-fade-leave-to {
   opacity: 0;
   transform: translateY(10px);
+}
+/* 右下角版本号 */
+.version-badge {
+  position: fixed;
+  right: 0.6rem;
+  bottom: 0.4rem;
+  z-index: 900;
+  font-size: 0.72rem;
+  opacity: 0.55;
+  color: inherit;
+  user-select: none;
+  pointer-events: none;
 }
 </style>

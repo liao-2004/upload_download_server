@@ -86,15 +86,14 @@ async function saveLocks(data) {
 const COMMENTS_FILE = path.join(__dirname, 'comments.json')
 
 // 顶部横幅配置（放在 server 根目录，和 comments.json 同级）
-const NOTICE_FILE = path.join(__dirname, 'notice.json')
+// 横幅/广告/版本号统一配置文件：server/config.json
+const CONFIG_FILE = path.join(__dirname, 'config.json')
 const DEFAULT_NOTICE = {
   url: 'https://www.aliyun.com/benefit?tid=product&utm_content=se_1023591267',
   content: '服务至2026年12月1日到期、请及时续费，以免影响正常使用，谢谢配合！',
   highlight: '2026年12月1日',
 }
 
-// 右下角广告配置（放在 server 根目录）
-const AD_FILE = path.join(__dirname, 'ad.json')
 // 广告图片目录：server/public（图片放这里，通过 /api/ad/image/:name 供前端加载）
 const AD_IMG_DIR = path.join(__dirname, 'public')
 const DEFAULT_AD = {
@@ -103,6 +102,18 @@ const DEFAULT_AD = {
   title: '推广',
   text: '这里放你的推广文案，例如：点击了解最新优惠活动',
   image: '', // 可选：图片路径，如 /api/ad/image/xx.png
+}
+
+const DEFAULT_VERSION = { version: 'V1.0.0' }
+
+// 读取统一配置文件（横幅/广告/版本号都在这一个文件里）
+async function loadAppConfig() {
+  try {
+    const raw = await fsp.readFile(CONFIG_FILE, 'utf8')
+    return JSON.parse(raw) || {}
+  } catch (e) {
+    return {}
+  }
 }
 
 async function loadComments() {
@@ -145,28 +156,22 @@ app.get('/api/files', async (req, res) => {
   }
 })
 
-// 顶部横幅配置
+// 顶部横幅配置（统一读 config.json 的 notice 段）
 app.get('/api/notice', async (req, res) => {
-  try {
-    const raw = await fsp.readFile(NOTICE_FILE, 'utf8')
-    const data = JSON.parse(raw)
-    res.json({ ...DEFAULT_NOTICE, ...data })
-  } catch (e) {
-    if (e.code === 'ENOENT') return res.json(DEFAULT_NOTICE)
-    res.status(500).json({ error: '读取横幅配置失败：' + e.message })
-  }
+  const cfg = await loadAppConfig()
+  res.json({ ...DEFAULT_NOTICE, ...(cfg.notice || {}) })
 })
 
-// 右下角广告配置
+// 右下角广告配置（统一读 config.json 的 ad 段）
 app.get('/api/ad', async (req, res) => {
-  try {
-    const raw = await fsp.readFile(AD_FILE, 'utf8')
-    const data = JSON.parse(raw)
-    res.json({ ...DEFAULT_AD, ...data })
-  } catch (e) {
-    if (e.code === 'ENOENT') return res.json(DEFAULT_AD)
-    res.status(500).json({ error: '读取广告配置失败：' + e.message })
-  }
+  const cfg = await loadAppConfig()
+  res.json({ ...DEFAULT_AD, ...(cfg.ad || {}) })
+})
+
+// 版本号配置（统一读 config.json 的 version 段）
+app.get('/api/version', async (req, res) => {
+  const cfg = await loadAppConfig()
+  res.json({ ...DEFAULT_VERSION, ...(cfg.version || {}) })
 })
 
 // 广告图片：从 server/public 目录按文件名返回（防路径穿越）
